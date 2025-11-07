@@ -49,6 +49,8 @@ static long long user_ticks;    /* # of timer ticks in user programs. */
 #define TIME_SLICE 4            /* # of timer ticks to give each thread. */
 static unsigned thread_ticks;   /* # of timer ticks since last yield. */
 
+static struct list sleep_list;
+
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
@@ -109,6 +111,8 @@ thread_init (void) {
 	lock_init (&tid_lock);
 	list_init (&ready_list);
 	list_init (&destruction_req);
+	// Init sleep list 
+	list_init(&sleep_list);
 
 	/* Set up a thread structure for the running thread. */
 	initial_thread = running_thread ();
@@ -243,6 +247,38 @@ thread_unblock (struct thread *t) {
 	list_push_back (&ready_list, &t->elem);
 	t->status = THREAD_READY;
 	intr_set_level (old_level);
+}
+
+bool wakeup_tick_cmp(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) {
+    struct thread *ta = list_entry(a, struct thread, elem);
+    struct thread *tb = list_entry(b, struct thread, elem);
+    return ta->wake_tick < tb->wake_tick;
+}
+
+void thread_sleep(int64_t wake_tick) {
+    struct thread *cur = thread_current(); // 현재 thread 받기
+    enum intr_level old_level;			// 인터럽트 활성상태 저장용
+
+    old_level = intr_disable();       // 인터럽트 비활성화 
+
+    cur->wake_tick = wake_tick; 
+	//void list_insert_ordered (struct list *, struct list_elem *,list_less_func *, void *aux);
+	list_insert_ordered(&sleep_list,&cur->elem,wakeup_tick_cmp, NULL ); //정렬 삽입 
+
+    thread_block();                   // actual blocking
+
+    intr_set_level(old_level);        // 인터럽트 복구
+}
+
+void check_wakeup(int64_t cur_tic) {
+
+    while (!list_empty(&sleep_list)) {
+        struct thread *t = list_entry(list_front(&sleep_list), struct thread, elem);
+        if (t->wake_tick > cur_tic) // 정렬되어 있기 때문에 앞이 안깨면 뒤에는 깰게 없다 조기 종료
+            break;
+        list_pop_front(&sleep_list);
+        thread_unblock(t);  // ready_list에 추가 
+    }
 }
 
 /* Returns the name of the running thread. */
