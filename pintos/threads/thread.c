@@ -267,6 +267,11 @@ thread_unblock (struct thread *t) {
 	// priority 정렬 삽입
 	list_insert_ordered(&ready_list,&t->elem,ready_priority_cmp, NULL);
 
+	// 만약 unblock할 t의 priority가 ready_list 첫번째보다 높으면 즉시 선점  
+	if (thread_current()!= idle_thread && t->priority > thread_current()->priority ){
+		thread_yield();
+	}
+
 	intr_set_level (old_level);
 }
 
@@ -384,7 +389,23 @@ thread_yield (void) {
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) {
-	thread_current ()->priority = new_priority;
+  	enum intr_level old_level = intr_disable();
+
+	struct thread *cur = thread_current();
+	cur->priority = new_priority;  // 우선순위 갱신
+
+	//ready_list 최상위 스레드가 나보다 높으면 즉시 양보
+	if (!list_empty(&ready_list)) {
+		struct thread *top =
+		list_entry(list_front(&ready_list), struct thread, elem);
+		if (top->priority > cur->priority) {
+		intr_set_level(old_level);       // 인터럽트 원복 후
+		thread_yield();            // 양보
+		return;
+		}
+	}
+
+	intr_set_level (old_level);
 }
 
 /* Returns the current thread's priority. */
