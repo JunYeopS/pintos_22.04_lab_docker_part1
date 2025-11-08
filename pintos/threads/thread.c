@@ -65,6 +65,9 @@ static void do_schedule(int status);
 static void schedule (void);
 static tid_t allocate_tid (void);
 
+static bool thread_priority_cmp (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
+wakeup_tick_cmp(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
+
 /* Returns true if T appears to point to a valid thread. */
 #define is_thread(t) ((t) != NULL && (t)->magic == THREAD_MAGIC)
 
@@ -244,7 +247,9 @@ thread_unblock (struct thread *t) {
 
 	old_level = intr_disable ();
 	ASSERT (t->status == THREAD_BLOCKED);
-	list_push_back (&ready_list, &t->elem);
+	// list_push_back (&ready_list, &t->elem);
+	list_insert_ordered (&ready_list, &t->elem, thread_priority_cmp, NULL);
+
 	t->status = THREAD_READY;
 	intr_set_level (old_level);
 }
@@ -253,10 +258,20 @@ thread_unblock (struct thread *t) {
  * @brief 두 스레드의 wake_tick을 비교하여 정렬 기준을 제공합니다.
  * @details list_insert_ordered에서 사용되며, a가 b보다 먼저 깨야 하면 True 반환
  */
-bool wakeup_tick_cmp(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) {
+wakeup_tick_cmp(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) {
     struct thread *ta = list_entry(a, struct thread, elem);
     struct thread *tb = list_entry(b, struct thread, elem);
     return ta->wake_tick < tb->wake_tick;
+}
+
+static bool
+thread_priority_cmp (const struct list_elem *a,
+                     const struct list_elem *b,
+                     void *aux UNUSED) {
+    struct thread *ta = list_entry(a, struct thread, elem);
+    struct thread *tb = list_entry(b, struct thread, elem);
+
+    return ta->priority > tb->priority;
 }
 
 /**
@@ -356,16 +371,17 @@ thread_exit (void) {
    may be scheduled again immediately at the scheduler's whim. */
 void
 thread_yield (void) {
-	struct thread *curr = thread_current ();
-	enum intr_level old_level;
+    struct thread *curr = thread_current ();
+    enum intr_level old_level;
 
-	ASSERT (!intr_context ());
+    ASSERT (!intr_context ());
 
-	old_level = intr_disable ();
-	if (curr != idle_thread)
-		list_push_back (&ready_list, &curr->elem);
-	do_schedule (THREAD_READY);
-	intr_set_level (old_level);
+    old_level = intr_disable ();
+    if (curr != idle_thread)
+        // list_push_back (&ready_list, &curr->elem); /* <-- 기존 코드 */
+        list_insert_ordered (&ready_list, &curr->elem, thread_priority_cmp, NULL); /* <-- 수정된 코드 */
+    do_schedule (THREAD_READY);
+    intr_set_level (old_level);
 }
 
 /* Sets the current thread's priority to NEW_PRIORITY. */
