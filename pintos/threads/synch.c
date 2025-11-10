@@ -59,17 +59,28 @@ sema_init (struct semaphore *sema, unsigned value) {
    sema_down function. */
 void
 sema_down (struct semaphore *sema) {
-	enum intr_level old_level;
-
+	
 	ASSERT (sema != NULL);
 	ASSERT (!intr_context ());
+	
+	enum intr_level old_level = intr_disable ();
 
-	old_level = intr_disable ();
-	while (sema->value == 0) {
-		list_push_back (&sema->waiters, &thread_current ()->elem);
-		thread_block ();
-	}
-	sema->value--;
+	if (sema->value > 0) {
+        // Fast Path: 자원이 있음.
+        sema->value--;
+    } else {
+        /* Slow Path: 자원이 없음. */
+        /* waiters 리스트에 우선순위 순으로 추가 */
+        list_insert_ordered (&sema->waiters, &thread_current()->elem, thread_priority_cmp, NULL);
+        /* 스레드 블락 (잠들기) */
+        thread_block ();
+        
+        /* * WAKE-UP POINT:
+         * sema_up()에 의해 여기서 깨어남.
+         * sema_up이 자원(token)을 넘겨준 것이므로
+         * value를 다시 확인하거나 decrement할 필요가 없음.
+         */
+    }
 	intr_set_level (old_level);
 }
 
@@ -104,15 +115,17 @@ sema_try_down (struct semaphore *sema) {
    This function may be called from an interrupt handler. */
 void
 sema_up (struct semaphore *sema) {
-	enum intr_level old_level;
+	enum intr_level old_level = intr_disable();
 
 	ASSERT (sema != NULL);
 
-	old_level = intr_disable ();
-	if (!list_empty (&sema->waiters))
-		thread_unblock (list_entry (list_pop_front (&sema->waiters),
-					struct thread, elem));
-	sema->value++;
+	if (!list_empty (&sema->waiters)) {
+        // list_pop_front()로 가장 우선순위가 높은 스레드를 깨움
+        struct thread *t = list_entry (list_pop_front (&sema->waiters), struct thread, elem);
+        thread_unblock (t);
+    } else {
+		sema->value++;
+	}
 	intr_set_level (old_level);
 }
 
@@ -281,11 +294,25 @@ cond_wait (struct condition *cond, struct lock *lock) {
 	ASSERT (!intr_context ());
 	ASSERT (lock_held_by_current_thread (lock));
 
-	sema_init (&waiter.semaphore, 0);
-	list_push_back (&cond->waiters, &waiter.elem);
-	lock_release (lock);
-	sema_down (&waiter.semaphore);
-	lock_acquire (lock);
+	enum intr_level old_leverl = intr_disable();
+
+	// waiters 리스트에 우선순위 순으로 자신을 삽입한다
+	list_insert_ordered (&cond->waiters, &thread_current()->elem, thread_priority_cmp, NULL);
+	
+	// 락을 놓고 잠들기
+	lock_release(lock);
+	thread_block(); // 잠자기
+	
+	// signal을 받고 깨어난 지점
+	intr_set_level (old_leverl);
+	
+	// 다시 락을 획들하고 반환
+	lock_acquire(lock);
+	// sema_init (&waiter.semaphore, 0);
+	// list_push_back (&cond->waiters, &waiter.elem);
+	// lock_release (lock);
+	// sema_down (&waiter.semaphore);
+	// lock_acquire (lock);
 }
 
 /* If any threads are waiting on COND (protected by LOCK), then
@@ -303,8 +330,13 @@ cond_signal (struct condition *cond, struct lock *lock UNUSED) {
 	ASSERT (lock_held_by_current_thread (lock));
 
 	if (!list_empty (&cond->waiters))
-		sema_up (&list_entry (list_pop_front (&cond->waiters),
-					struct semaphore_elem, elem)->semaphore);
+	{
+		// waiter 리스트에서 가장 우선순위가 높은 스레드를 꺼냄 (sema_up과 동일하게)
+		struct thread *t = list_entry (list_pop_front (&cond->waiters), struct  thread, elem);
+		
+		// 스레드를 unblock
+		thread_unblock(t);
+	}
 }
 
 /* Wakes up all threads, if any, waiting on COND (protected by
@@ -318,6 +350,10 @@ cond_broadcast (struct condition *cond, struct lock *lock) {
 	ASSERT (cond != NULL);
 	ASSERT (lock != NULL);
 
+	// cond_signal은 락을 요구
+	// 락을 잡은 상태에서 반복 호출
 	while (!list_empty (&cond->waiters))
-		cond_signal (cond, lock);
+	{
+	 	cond_signal (cond, lock);
+	}
 }

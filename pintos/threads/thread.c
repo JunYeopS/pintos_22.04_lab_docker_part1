@@ -65,7 +65,7 @@ static void do_schedule(int status);
 static void schedule (void);
 static tid_t allocate_tid (void);
 
-static bool thread_priority_cmp (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
+bool thread_priority_cmp (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
 wakeup_tick_cmp(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
 
 /* Returns true if T appears to point to a valid thread. */
@@ -259,6 +259,16 @@ thread_unblock (struct thread *t) {
 	list_insert_ordered (&ready_list, &t->elem, thread_priority_cmp, NULL);
 
 	t->status = THREAD_READY;
+
+	// timeout 오류가 걸렸다.
+	// 인터럽터 컨텍스트가 아니고
+	// ready_list가 비어있으면,
+	// ready_list의 맨 앞 스레드가
+	// 현재 실행 중인 스레드보다 우선 순위가 높다면
+	// thread_yeild()를 호출하여 CPU 양보
+	if (!intr_context () && t->priority > thread_current ()->priority) {
+        thread_yield ();
+    }
 	intr_set_level (old_level);
 }
 
@@ -272,7 +282,7 @@ wakeup_tick_cmp(const struct list_elem *a, const struct list_elem *b, void *aux 
     return ta->wake_tick < tb->wake_tick;
 }
 
-static bool
+bool
 thread_priority_cmp (const struct list_elem *a,
                      const struct list_elem *b,
                      void *aux UNUSED) {
@@ -300,11 +310,13 @@ void thread_sleep(int64_t wake_tick) {
 
     old_level = intr_disable();       // 인터럽트 비활성화 
 
-    cur->wake_tick = wake_tick; 
+	ASSERT (!thread_current != idle_thread);
+
+	cur->wake_tick = wake_tick; 
 	//void list_insert_ordered (struct list *, struct list_elem *,list_less_func *, void *aux);
 	list_insert_ordered(&sleep_list,&cur->elem,wakeup_tick_cmp, NULL ); //정렬 삽입 
 
-    thread_block();                   // actual blocking
+	thread_block();                   // actual blocking
 
     intr_set_level(old_level);        // 인터럽트 복구
 }
@@ -387,7 +399,7 @@ thread_yield (void) {
     old_level = intr_disable ();
     if (curr != idle_thread)
         // list_push_back (&ready_list, &curr->elem); /* <-- 기존 코드 */
-        list_insert_ordered (&ready_list, &curr->elem, thread_priority_cmp, NULL); /* <-- 수정된 코드 */
+        list_insert_ordered (&ready_list, &curr->elem, thread_priority_cmp, NULL); // <-- 수정된 코드 
     do_schedule (THREAD_READY);
     intr_set_level (old_level);
 }
