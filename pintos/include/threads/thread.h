@@ -95,6 +95,14 @@ struct thread {
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
 
+	// 기부받기 전의 원래 스레드의 우선순위를 저장
+	int base_priority;
+	// 스레드가 현재 획득을 기다리고 있는 락의 주소. (기다리는게 없으면 NULL)
+	struct lock *waiting_on_lock;
+	// 도네이션 리스트 - 자신에게 prioirty를 나누어준 스레드들의 리스트
+	struct list donations;
+	// 위 리스트를 관리하기 위한 element로 thread 구조체의 elem과 구분하여 사용
+	struct list_elem donations_elem;
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4;                     /* Page map level 4 */
@@ -144,5 +152,9 @@ int thread_get_load_avg (void);
 void do_iret (struct intr_frame *tf);
 
 bool thread_priority_cmp (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
+void thread_sleep(int64_t wake_tick);
+void check_wakeup(int64_t cur_tic);
+bool wakeup_tick_cmp(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
 
+void thread_check_yield_on_priority_drop(void);
 #endif /* threads/thread.h */

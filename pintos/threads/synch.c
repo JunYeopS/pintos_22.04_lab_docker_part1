@@ -201,8 +201,25 @@ lock_acquire (struct lock *lock) {
 	ASSERT (!intr_context ());
 	ASSERT (!lock_held_by_current_thread (lock));
 
-	sema_down (&lock->semaphore);
-	lock->holder = thread_current ();
+   struct thread *t = thread_current();
+
+   // 락의 홀더가 있고, 내 우선순위가 더 높으면 기부
+   if (lock->holder != NULL && lock->holder->priority < t->priority)
+   {
+      lock->holder->priority = t->priority;
+   }
+
+   // 내가 어떤 락을 기다리는지
+   t->waiting_on_lock = lock;
+
+   // lock을 기다리면서 잠든다.
+   sema_down(&lock->semaphore);
+
+   // 이제 내가 이 락을 기다리는 것이 아니다.
+   t->waiting_on_lock = NULL;
+
+   // 이제 내가 락의 새 주인
+	lock->holder = t;
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
@@ -235,8 +252,17 @@ lock_release (struct lock *lock) {
 	ASSERT (lock != NULL);
 	ASSERT (lock_held_by_current_thread (lock));
 
+   struct thread *t = thread_current();
+   
 	lock->holder = NULL;
+
+   t->priority = t->base_priority;
 	sema_up (&lock->semaphore);
+   /* * 락을 해제하고 우선순위가 낮아졌을 수 있으므로,
+    * ready_list에서 가장 우선순위가 높은 스레드와 자신을 비교하여
+    * 더 높은 스레드가 있다면 CPU를 양보합니다.
+    */
+   void thread_check_yield_on_priority_drop(void);
 }
 
 /* Returns true if the current thread holds LOCK, false
@@ -287,8 +313,6 @@ cond_init (struct condition *cond) {
    we need to sleep. */
 void
 cond_wait (struct condition *cond, struct lock *lock) {
-	struct semaphore_elem waiter;
-
 	ASSERT (cond != NULL);
 	ASSERT (lock != NULL);
 	ASSERT (!intr_context ());
@@ -302,12 +326,12 @@ cond_wait (struct condition *cond, struct lock *lock) {
 	// 락을 놓고 잠들기
 	lock_release(lock);
 	thread_block(); // 잠자기
-	
+	lock_acquire(lock);
+
 	// signal을 받고 깨어난 지점
 	intr_set_level (old_leverl);
 	
 	// 다시 락을 획들하고 반환
-	lock_acquire(lock);
 	// sema_init (&waiter.semaphore, 0);
 	// list_push_back (&cond->waiters, &waiter.elem);
 	// lock_release (lock);
