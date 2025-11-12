@@ -213,9 +213,19 @@ void update_priority (struct thread *t){
 	}
 	// 변경이 이루어졌을때 
 	if (t->priority != new_priority){
+		int old_priority = t->priority; // 이전 우선순위를 저장 (전파 조건 확인용)
 		t->priority = new_priority;
-	}
 
+		// 갱신된 우선순위가 이전보다 높았고 (상승) AND 현재 스레드 t가 Lock을 기다리고 있다면
+        if (new_priority > old_priority && t->waiting_lock != NULL) {
+            struct lock *lock = t->waiting_lock;
+            
+            // t가 기다리는 Lock의 소유자에게 재귀적으로 우선순위를 전달
+            if (lock->holder != NULL) {
+                update_priority(lock->holder); // 재귀적 전파
+            }
+	}
+	}
 }
 
 /* Acquires LOCK, sleeping until it becomes available if
@@ -233,14 +243,13 @@ lock_acquire (struct lock *lock) {
 	ASSERT (!lock_held_by_current_thread (lock));
 	
 	struct thread *cur = thread_current ();
-	cur->waiting_lock = lock; 		// cur이 기다리는 lock 기록 
-
 	struct thread *holder = lock->holder;
 
 	if(holder != NULL){ 		// 해당 lock을 누군가 소유 하고 있다면  
+		cur->waiting_lock = lock; 		// cur이 기다리는 lock 기록 
+
 		// 해당 lock 대기열에 추가  (정렬) 
-		list_insert_ordered(&holder->donations, 
-			&cur->donation_elem, waiters_priority_cmp, NULL);
+		list_insert_ordered(&holder->donations, &cur->donation_elem, donation_priority_cmp, NULL);
 
 		update_priority(holder);
 	}
@@ -248,8 +257,8 @@ lock_acquire (struct lock *lock) {
 	sema_down (&lock->semaphore);
 
 	/* 획득 성공 */
-	cur->waiting_lock = NULL;
-	lock->holder = cur;
+	cur->waiting_lock = NULL; 
+	holder = cur;
 }
 
 /* Tries to acquires LOCK and returns true if successful or false

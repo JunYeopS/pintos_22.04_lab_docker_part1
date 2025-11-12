@@ -398,14 +398,14 @@ thread_set_priority (int new_priority) {
   	enum intr_level old_level = intr_disable();
 
 	struct thread *cur = thread_current();
-	cur->priority = new_priority;  // 우선순위 갱신
 
 	cur->base_priority = new_priority;     /* base만 갱신 */
 
+	update_priority(cur);
+
 	//ready_list 최상위 스레드가 나보다 높으면 즉시 양보
 	if (!list_empty(&ready_list)) {
-		struct thread *top =
-		list_entry(list_front(&ready_list), struct thread, elem);
+		struct thread *top = list_entry(list_front(&ready_list), struct thread, elem);
 
 		if (top->priority > cur->priority) {
 			thread_yield();            // 양보
