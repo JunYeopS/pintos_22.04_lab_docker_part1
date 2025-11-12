@@ -199,7 +199,6 @@ void update_priority (struct thread *t){
 
 	int new_priority = t->base_priority;
 
-	// t의 donations 리스트에서 가장 높은 우선순위를 찾기
 	if (!list_empty(&t->donations)){
 		
 		// 대기자중 제일 높은 pirority = donor 
@@ -209,22 +208,11 @@ void update_priority (struct thread *t){
 		if (donor->priority > new_priority){
 			new_priority = donor->priority;		// 기부 받을 priority 
 		}
-
 	}
 	// 변경이 이루어졌을때 
 	if (t->priority != new_priority){
 		int old_priority = t->priority; // 이전 우선순위를 저장 (전파 조건 확인용)
 		t->priority = new_priority;
-
-		// 갱신된 우선순위가 이전보다 높았고 (상승) AND 현재 스레드 t가 Lock을 기다리고 있다면
-        if (new_priority > old_priority && t->waiting_lock != NULL) {
-            struct lock *lock = t->waiting_lock;
-            
-            // t가 기다리는 Lock의 소유자에게 재귀적으로 우선순위를 전달
-            if (lock->holder != NULL) {
-                update_priority(lock->holder); // 재귀적 전파
-            }
-	}
 	}
 }
 
@@ -244,21 +232,41 @@ lock_acquire (struct lock *lock) {
 	
 	struct thread *cur = thread_current ();
 	struct thread *holder = lock->holder;
-
+	
 	if(holder != NULL){ 		// 해당 lock을 누군가 소유 하고 있다면  
 		cur->waiting_lock = lock; 		// cur이 기다리는 lock 기록 
 
 		// 해당 lock 대기열에 추가  (정렬) 
 		list_insert_ordered(&holder->donations, &cur->donation_elem, donation_priority_cmp, NULL);
 
-		update_priority(holder);
-	}
+		struct thread *current_holder = holder;
 
+		// Lock 체인을 따라 priority 상승을 반복 전파
+		for (int i = 0; i< 8; ++i){
+			// Lock 체인이 끝났거나 전파가 중단되면 종료			
+			if (current_holder == NULL) {
+					break;
+				}
+			int old_priority = current_holder->priority;
+
+			update_priority(current_holder);
+
+			// 우선순위가 상승 했을때 다음 Lock 소유자한테 전파 
+			if (current_holder->priority > old_priority && current_holder->waiting_lock != NULL) {
+				// 다음 lock holder한테 포인터 넘기기 
+				current_holder = current_holder->waiting_lock->holder;
+
+			} else{ // 상승 하지 않았을 때 
+				// 전파 중단 
+				current_holder = NULL;
+			}
+		}
+	}
 	sema_down (&lock->semaphore);
 
 	/* 획득 성공 */
 	cur->waiting_lock = NULL; 
-	holder = cur;
+	lock->holder = cur;
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
